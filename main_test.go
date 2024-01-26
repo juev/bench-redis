@@ -36,3 +36,14 @@ func Benchmark_readKeysWithGoRoutines(b *testing.B) {
 		}
 	}
 }
+
+func Benchmark_readKeysWithConc(b *testing.B) {
+	client := createRedisClient()
+	setKeysToRedis(client, keys)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if gotFailedValues := readKeysWithConc(client, keys); gotFailedValues > 0 {
+			b.Errorf("failed to read from redis")
+		}
+	}
+}

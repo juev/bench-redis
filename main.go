@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-redis/redis/v7"
 	"github.com/joho/godotenv"
+	"github.com/sourcegraph/conc/pool"
 )
 
 func main() {
@@ -139,6 +140,45 @@ func readKeysWithGoRoutines(client *redis.ClusterClient, deliveries []string) (f
 			}(deliveryID)
 		}
 		wg.Wait()
+		close(res)
+	}()
+
+	for v := range res {
+		deliveryIsCancellable[v.deliveryID] = v.value
+	}
+
+	return failedValues
+}
+
+func readKeysWithConc(client *redis.ClusterClient, deliveries []string) (failedValues int) {
+	var deliveryIsCancellable = make(map[string]bool)
+
+	failed := atomic.Int32{}
+	type V struct {
+		deliveryID string
+		value      bool
+	}
+	var res = make(chan V)
+	var cn = pool.New().WithMaxGoroutines(10)
+	go func() {
+		for _, deliveryID := range deliveries {
+			cn.Go(func() {
+				value := client.Get(deliveryID)
+				if value == nil {
+					failed.Add(1)
+					return
+				}
+				val, err := strconv.ParseBool(value.Val())
+				if err != nil {
+					log.Fatalf("cannot parse bool: %s", err)
+				}
+				res <- V{
+					deliveryID: deliveryID,
+					value:      val,
+				}
+			})
+		}
+		cn.Wait()
 		close(res)
 	}()
 
